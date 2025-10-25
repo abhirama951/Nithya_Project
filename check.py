@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 # ----------------------------
 # Parameters
 # ----------------------------
-csv_file = "lms_output.csv"  # produced by Verilog TB
+csv_file = "wb_lms_output.csv"  # produced by Verilog TB
 qformat_bits = 12             # Q4.12 fixed-point
 scale = 2**qformat_bits
 

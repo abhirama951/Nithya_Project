@@ -1,64 +1,73 @@
-module wb_lms(
-    input           wb_clk_i,
-    input           wb_rst_i,
-    input  [31:0]   wb_adr_i,
-    input  [15:0]   wb_dat_i,
-    output reg [15:0] wb_dat_o,
-    input           wb_we_i,
-    input           wb_stb_i,
-    input           wb_cyc_i,
-    output reg      wb_ack_o
+module wb_lms (
+    input  wire        Clk,
+    input  wire        Rst,
+    input  wire        wb_cyc_i,
+    input  wire        wb_stb_i,
+    input  wire        wb_we_i,
+    input  wire [31:0] wb_adr_i,
+    input  wire [15:0] wb_dat_i,
+    output reg  [15:0] wb_dat_o,
+    output reg         wb_ack_o,
+    output reg         irq_o
 );
 
-    reg signed [15:0] reg_x_in, reg_d_in;
-    reg reg_mode_train;
+    // -----------------------------
+    // LMS interface signals
+    // -----------------------------
+    reg signed [15:0] x_in_reg, d_in_reg;
+    reg mode_train_reg;
     wire signed [15:0] y_out, err, w0, w1, w2, w3;
 
-    LMS lms_core(
-        .Clk(wb_clk_i),
-        .Rst(wb_rst_i),
-        .mode_train(reg_mode_train),
-        .x_in(reg_x_in),
-        .d_in(reg_d_in),
+    LMS dut (
+        .Clk(Clk),
+        .Rst(Rst),
+        .mode_train(mode_train_reg),
+        .x_in(x_in_reg),
+        .d_in(d_in_reg),
         .y_out(y_out),
         .err(err),
-        .w0(w0), .w1(w1), .w2(w2), .w3(w3)
+        .w0(w0),
+        .w1(w1),
+        .w2(w2),
+        .w3(w3)
     );
 
-    // Wishbone write
-    always @(posedge wb_clk_i or posedge wb_rst_i) begin
-        if (wb_rst_i) begin
-            reg_x_in <= 16'sd0;
-            reg_d_in <= 16'sd0;
-            reg_mode_train <= 1'b0;
-            wb_ack_o <= 1'b0;
+    // -----------------------------
+    // Wishbone logic
+    // -----------------------------
+    always @(posedge Clk or posedge Rst) begin
+        if (Rst) begin
+            wb_ack_o       <= 0;
+            wb_dat_o       <= 0;
+            irq_o          <= 0;
+            x_in_reg       <= 0;
+            d_in_reg       <= 0;
+            mode_train_reg <= 0;
         end else begin
-            wb_ack_o <= 1'b0;
-            if (wb_stb_i & wb_cyc_i) begin
-                wb_ack_o <= 1'b1;
+            wb_ack_o <= 0;
+            irq_o    <= 0;
+            if (wb_cyc_i && wb_stb_i && !wb_ack_o) begin
+                wb_ack_o <= 1;
                 if (wb_we_i) begin
-                    case(wb_adr_i[4:2])
-                        3'b000: reg_x_in <= wb_dat_i;
-                        3'b001: reg_d_in <= wb_dat_i;
-                        3'b010: reg_mode_train <= wb_dat_i[0];
-                        default: ;
+                    case (wb_adr_i[5:2])
+                        4'h0: x_in_reg       <= wb_dat_i;
+                        4'h1: d_in_reg       <= wb_dat_i;
+                        4'h2: mode_train_reg <= wb_dat_i[0]; // only LSB
+                    endcase
+                    irq_o <= 1; // optional interrupt on write
+                end else begin
+                    case (wb_adr_i[5:2])
+                        4'h3: wb_dat_o <= y_out;
+                        4'h4: wb_dat_o <= err;
+                        4'h5: wb_dat_o <= w0;
+                        4'h6: wb_dat_o <= w1;
+                        4'h7: wb_dat_o <= w2;
+                        4'h8: wb_dat_o <= w3;
+                        default: wb_dat_o <= 16'd0;
                     endcase
                 end
             end
         end
-    end
-
-    // Wishbone read
-    always @(*) begin
-        wb_dat_o = 16'd0;
-        case(wb_adr_i[4:2])
-            3'b011: wb_dat_o = y_out;
-            3'b100: wb_dat_o = err;
-            3'b101: wb_dat_o = w0;
-            3'b110: wb_dat_o = w1;
-            3'b111: wb_dat_o = w2;
-            3'b000: wb_dat_o = w3;
-        endcase
     end
 
 endmodule

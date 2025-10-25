@@ -1,75 +1,65 @@
-// Wishbone wrapper for original LMS module
-module wb_lms #(
-  parameter DATA_WIDTH = 16,
-  parameter ADDR_WIDTH = 4
-)(
-  input                    wb_clk_i,
-  input                    wb_rst_i,
-  input      [ADDR_WIDTH-1:0] wb_adr_i,
-  input      [DATA_WIDTH-1:0] wb_dat_i,
-  output reg [DATA_WIDTH-1:0] wb_dat_o,
-  input                    wb_we_i,
-  input                    wb_stb_i,
-  input                    wb_cyc_i,
-  output reg               wb_ack_o
+module wb_lms(
+    input           wb_clk_i,
+    input           wb_rst_i,
+    input  [31:0]   wb_adr_i,
+    input  [15:0]   wb_dat_i,
+    output reg [15:0] wb_dat_o,
+    input           wb_we_i,
+    input           wb_stb_i,
+    input           wb_cyc_i,
+    output reg      wb_ack_o
 );
 
-  // --- Internal control and status registers ---
-  reg signed [15:0] x_in;
-  reg signed [15:0] gamma;
-  wire signed [15:0] y_out, err;
-  wire signed [15:0] w0, w1, w2, w3;
+    reg signed [15:0] reg_x_in, reg_d_in;
+    reg reg_mode_train;
+    wire signed [15:0] y_out, err, w0, w1, w2, w3;
 
-  // LMS core instance (original version)
-  LMS lms_inst (
-    .Clk(wb_clk_i),
-    .Rst(wb_rst_i),
-    .x_in(x_in),
-    .y_out(y_out),
-    .w0(w0),
-    .w1(w1),
-    .w2(w2),
-    .w3(w3),
-    .err(err)
-  );
+    LMS lms_core(
+        .Clk(wb_clk_i),
+        .Rst(wb_rst_i),
+        .mode_train(reg_mode_train),
+        .x_in(reg_x_in),
+        .d_in(reg_d_in),
+        .y_out(y_out),
+        .err(err),
+        .w0(w0), .w1(w1), .w2(w2), .w3(w3)
+    );
 
-  // Write operation
-  always @(posedge wb_clk_i) begin
-    if (wb_rst_i) begin
-      x_in  <= 0;
-      gamma <= 16'b0000001100110011; // default 0.2
-    end else if (wb_stb_i && wb_cyc_i && wb_we_i && !wb_ack_o) begin
-      case (wb_adr_i)
-        4'h0: x_in  <= wb_dat_i;        // Input sample
-        4'h1: gamma <= wb_dat_i;        // gamma parameter
-      endcase
+    // Wishbone write
+    always @(posedge wb_clk_i or posedge wb_rst_i) begin
+        if (wb_rst_i) begin
+            reg_x_in <= 16'sd0;
+            reg_d_in <= 16'sd0;
+            reg_mode_train <= 1'b0;
+            wb_ack_o <= 1'b0;
+        end else begin
+            wb_ack_o <= 1'b0;
+            if (wb_stb_i & wb_cyc_i) begin
+                wb_ack_o <= 1'b1;
+                if (wb_we_i) begin
+                    case(wb_adr_i[4:2])
+                        3'b000: reg_x_in <= wb_dat_i;
+                        3'b001: reg_d_in <= wb_dat_i;
+                        3'b010: reg_mode_train <= wb_dat_i[0];
+                        default: ;
+                    endcase
+                end
+            end
+        end
     end
-  end
 
-  // Read operation
-  always @(*) begin
-    wb_dat_o = 0;
-    case (wb_adr_i)
-      4'h0: wb_dat_o = x_in;   // input
-      4'h1: wb_dat_o = gamma;  // step size
-      4'h2: wb_dat_o = y_out;  // output
-      4'h3: wb_dat_o = err;    // error
-      4'h4: wb_dat_o = w0;
-      4'h5: wb_dat_o = w1;
-      4'h6: wb_dat_o = w2;
-      4'h7: wb_dat_o = w3;
-    endcase
-  end
-
-  // Simple acknowledge
-  always @(posedge wb_clk_i) begin
-    if (wb_rst_i)
-      wb_ack_o <= 1'b0;
-    else if (wb_stb_i && wb_cyc_i && !wb_ack_o)
-      wb_ack_o <= 1'b1;
-    else
-      wb_ack_o <= 1'b0;
-  end
+    // Wishbone read
+    always @(*) begin
+        wb_dat_o = 16'd0;
+        case(wb_adr_i[4:2])
+            3'b011: wb_dat_o = y_out;
+            3'b100: wb_dat_o = err;
+            3'b101: wb_dat_o = w0;
+            3'b110: wb_dat_o = w1;
+            3'b111: wb_dat_o = w2;
+            3'b000: wb_dat_o = w3;
+        endcase
+    end
 
 endmodule
 

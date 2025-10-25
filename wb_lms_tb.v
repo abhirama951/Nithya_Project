@@ -1,89 +1,80 @@
 `timescale 1ns/1ps
+module LMS_TB;
 
-module wb_lms_tb;
+    reg Clk, Rst;
+    reg mode_train;
+    reg signed [15:0] x_in;
+    reg signed [15:0] d_in;
+    wire signed [15:0] y_out, err, w0, w1, w2, w3;
 
-  reg wb_clk_i, wb_rst_i;
-  reg [3:0] wb_adr_i;
-  reg [15:0] wb_dat_i;
-  wire [15:0] wb_dat_o;
-  reg wb_we_i, wb_stb_i, wb_cyc_i;
-  wire wb_ack_o;
+    integer i;
+    reg signed [15:0] x_data[0:99];
+    reg signed [15:0] d_data[0:99];
 
-  // DUT
-  wb_lms dut (
-    .wb_clk_i(wb_clk_i),
-    .wb_rst_i(wb_rst_i),
-    .wb_adr_i(wb_adr_i),
-    .wb_dat_i(wb_dat_i),
-    .wb_dat_o(wb_dat_o),
-    .wb_we_i(wb_we_i),
-    .wb_stb_i(wb_stb_i),
-    .wb_cyc_i(wb_cyc_i),
-    .wb_ack_o(wb_ack_o)
-  );
+    integer csv_file;
 
-  // Clock generation
-  always #5 wb_clk_i = ~wb_clk_i;
+    // Scaling factor for Q4.12
+    real SF = 1.0/4096.0;
 
-  // Wishbone write task
-  task wb_write;
-    input [3:0] addr;
-    input [15:0] data;
-    begin
-      @(posedge wb_clk_i);
-      wb_adr_i = addr;
-      wb_dat_i = data;
-      wb_we_i  = 1;
-      wb_stb_i = 1;
-      wb_cyc_i = 1;
-      @(posedge wb_clk_i);
-      while (!wb_ack_o) @(posedge wb_clk_i);
-      wb_stb_i = 0;
-      wb_cyc_i = 0;
-      wb_we_i  = 0;
+    // Instantiate LMS
+    LMS dut (
+        .Clk(Clk),
+        .Rst(Rst),
+        .mode_train(mode_train),
+        .x_in(x_in),
+        .d_in(d_in),
+        .y_out(y_out),
+        .err(err),
+        .w0(w0), .w1(w1), .w2(w2), .w3(w3)
+    );
+
+    // Clock
+    initial Clk = 0;
+    always #5 Clk = ~Clk;  // 10ns period
+
+    initial begin
+        $dumpfile("LMS_tb.vcd");
+        $dumpvars(0, LMS_TB);
+
+        // Open CSV file
+        csv_file = $fopen("lms_output.csv","w");
+        $fwrite(csv_file,"time,x_in,y_out,d_in,err,w0,w1,w2,w3\n");
+
+        // Reset
+        Rst = 1; mode_train = 0; x_in = 0; d_in = 0;
+        #20;
+        Rst = 0;
+
+        // Load input and desired data
+        $readmemb("x_input.txt", x_data);
+        $readmemb("d_input.txt", d_data);
+
+        // -----------------------------
+        // Training mode
+        // -----------------------------
+        mode_train = 1;
+        for (i=0;i<100;i=i+1) begin
+            x_in = x_data[i];
+            d_in = d_data[i];
+            #10; // wait 1 clock
+            $fwrite(csv_file,"%0t,%d,%d,%d,%d,%d,%d,%d,%d\n",
+                    $time, x_in, y_out, d_in, err, w0, w1, w2, w3);
+        end
+
+        // -----------------------------
+        // Filter mode
+        // -----------------------------
+        mode_train = 0;
+        for (i=0;i<100;i=i+1) begin
+            x_in = x_data[i];
+            d_in = 0; // not used
+            #10;
+            $fwrite(csv_file,"%0t,%d,%d,%d,%d,%d,%d,%d,%d\n",
+                    $time, x_in, y_out, 0, 0, w0, w1, w2, w3);
+        end
+
+        $fclose(csv_file);
+        $finish;
     end
-  endtask
-
-  // Wishbone read task
-  task wb_read;
-    input [3:0] addr;
-    begin
-      @(posedge wb_clk_i);
-      wb_adr_i = addr;
-      wb_we_i  = 0;
-      wb_stb_i = 1;
-      wb_cyc_i = 1;
-      @(posedge wb_clk_i);
-      while (!wb_ack_o) @(posedge wb_clk_i);
-      $display("WB READ [%0h] = %0d", addr, wb_dat_o);
-      wb_stb_i = 0;
-      wb_cyc_i = 0;
-    end
-  endtask
-
-  initial begin
-    wb_clk_i = 0;
-    wb_rst_i = 1;
-    wb_stb_i = 0;
-    wb_cyc_i = 0;
-    wb_we_i  = 0;
-    #20 wb_rst_i = 0;
-
-    // Write input samples
-    repeat (10) begin
-      wb_write(4'h0, $random);
-      #20;
-      wb_read(4'h2); // y_out
-      wb_read(4'h3); // err
-    end
-
-    #100 $finish;
-  end
-
-  initial begin
-    $dumpfile("wb_lms.vcd");
-    $dumpvars(0, wb_lms_tb);
-  end
-
 endmodule
 

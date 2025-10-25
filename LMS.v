@@ -1,111 +1,99 @@
 module LMS (
-    input Clk, Rst,
-    input signed [15:0] x_in, // Input signal
-    output signed [15:0] y_out, // Output signal
-    output signed [15:0] w0, w1, w2, w3, // Weights
-    output signed [15:0] err // Errors
+    input Clk,
+    input Rst,
+    input mode_train,                 // 1 = training, 0 = filter mode
+    input signed [15:0] x_in,        // Input sample Q4.12
+    input signed [15:0] d_in,        // Desired output (used in training)
+    output signed [15:0] y_out,      // LMS output
+    output signed [15:0] err,        // Error (d_in - y_out)
+    output signed [15:0] w0, w1, w2, w3 // Weights
 );
-  // 4 bits for integer, 12 bits for fraction
-  parameter signed [15:0] gamma = 16'b0000001100110011; // 0.2
 
-  reg signed [15:0] wn[0:3], x[0:3];
-  wire signed [15:0] wn_u[0:3];
-  wire signed [15:0] fir_out, m1,m2,m3,m4;
-  wire signed [31:0] m11,m21,m31,m41, m13,m23,m33,m43, y_out1;
-  reg signed [15:0] d_in;
+    parameter signed [15:0] gamma = 16'b0000100000000000; // 0.5 in Q4.12
 
-  FIR_Filter fir(
-      .Clk(Clk),
-      .Rst(Rst),
-      .x(x_in),
-      .d(fir_out)
-  );
+    // -----------------------------
+    // Internal registers
+    // -----------------------------
+    reg signed [15:0] wn[0:3]; // Weights
+    reg signed [15:0] x[0:3];  // Delay line
+    reg signed [15:0] err_reg;
 
-  always @(*) begin
-    if (Rst)
-      d_in <= 0;
-    else
-      d_in <= fir_out;
-  end
-
-  always @(posedge Clk or posedge Rst) begin
-    if (Rst) begin
-      x[3]<=0; x[2]<=0; x[1]<=0; x[0]<=0;
-    end else begin
-      x[3]<=x[2]; x[2]<=x[1]; x[1]<=x[0]; x[0]<=x_in;
+    // -----------------------------
+    // Delay line
+    // -----------------------------
+    always @(posedge Clk or posedge Rst) begin
+        if (Rst) begin
+            x[0]<=16'sd0; x[1]<=16'sd0; x[2]<=16'sd0; x[3]<=16'sd0;
+        end else begin
+            x[3]<=x[2];
+            x[2]<=x[1];
+            x[1]<=x[0];
+            x[0]<=x_in;
+        end
     end
-  end
 
-  assign y_out1 = $signed(wn[0])*$signed(x[0]) +
-                  $signed(wn[1])*$signed(x[1]) +
-                  $signed(wn[2])*$signed(x[2]) +
-                  $signed(wn[3])*$signed(x[3]);
-  assign y_out = y_out1[27:12];
+    // -----------------------------
+    // Compute output
+    // -----------------------------
+    wire signed [31:0] y_acc = $signed(wn[0])*x[0] +
+                               $signed(wn[1])*x[1] +
+                               $signed(wn[2])*x[2] +
+                               $signed(wn[3])*x[3];
 
-  assign m11 = $signed(err)*$signed(x[0]);
-  assign m13 = $signed(gamma)*$signed(m11[27:12]);
-  assign m1 = m13[27:12];
+    assign y_out = y_acc[27:12];
 
-  assign m21 = $signed(err)*$signed(x[1]);
-  assign m23 = $signed(gamma)*$signed(m21[27:12]);
-  assign m2 = m23[27:12];
-
-  assign m31 = $signed(err)*$signed(x[2]);
-  assign m33 = $signed(gamma)*$signed(m31[27:12]);
-  assign m3 = m33[27:12];
-
-  assign m41 = $signed(err)*$signed(x[3]);
-  assign m43 = $signed(gamma)*$signed(m41[27:12]);
-  assign m4 = m43[27:12];
-
-  assign wn_u[0] = wn[0] + m1;
-  assign wn_u[1] = wn[1] + m2;
-  assign wn_u[2] = wn[2] + m3;
-  assign wn_u[3] = wn[3] + m4;
-
-  always @(posedge Clk or posedge Rst) begin
-    if (Rst) begin
-      wn[0]<=0; wn[1]<=0; wn[2]<=0; wn[3]<=0;
-    end else begin
-      wn[0]<=wn_u[0]; wn[1]<=wn_u[1]; wn[2]<=wn_u[2]; wn[3]<=wn_u[3];
+    // -----------------------------
+    // Compute error (used only in training)
+    // -----------------------------
+    always @(posedge Clk or posedge Rst) begin
+        if (Rst)
+            err_reg <= 16'sd0;
+        else if (mode_train)
+            err_reg <= d_in - y_out;
+        else
+            err_reg <= 16'sd0;
     end
-  end
+    assign err = err_reg;
 
-  assign w0 = wn[0];
-  assign w1 = wn[1];
-  assign w2 = wn[2];
-  assign w3 = wn[3];
-  assign err = d_in - y_out;
+    // -----------------------------
+    // LMS weight update
+    // -----------------------------
+    wire signed [31:0] p0 = $signed(err_reg) * x[0];
+    wire signed [31:0] p1 = $signed(err_reg) * x[1];
+    wire signed [31:0] p2 = $signed(err_reg) * x[2];
+    wire signed [31:0] p3 = $signed(err_reg) * x[3];
 
-endmodule
+    wire signed [15:0] p0_q = p0[27:12];
+    wire signed [15:0] p1_q = p1[27:12];
+    wire signed [15:0] p2_q = p2[27:12];
+    wire signed [15:0] p3_q = p3[27:12];
 
+    wire signed [31:0] m0_long = $signed(gamma) * $signed(p0_q);
+    wire signed [31:0] m1_long = $signed(gamma) * $signed(p1_q);
+    wire signed [31:0] m2_long = $signed(gamma) * $signed(p2_q);
+    wire signed [31:0] m3_long = $signed(gamma) * $signed(p3_q);
 
-module FIR_Filter (
-  input Clk,
-  input Rst,
-  input signed [15:0] x,
-  output signed [15:0] d
-);
-  reg signed [15:0] w0, w1, w2, w3;
-  reg signed [15:0] xn_0, xn_1, xn_2, xn_3;
-  reg signed [31:0] d1;
+    wire signed [15:0] m0 = m0_long[27:12];
+    wire signed [15:0] m1 = m1_long[27:12];
+    wire signed [15:0] m2 = m2_long[27:12];
+    wire signed [15:0] m3 = m3_long[27:12];
 
-  always @(posedge Clk) begin
-    if (Rst) begin
-      xn_0<=0; xn_1<=0; xn_2<=0; xn_3<=0; d1<=0;
-    end else begin
-      xn_3<=xn_2; xn_2<=xn_1; xn_1<=xn_0; xn_0<=x;
-      d1 <= w0*xn_0 + w1*xn_1 + w2*xn_2 + w3*xn_3;
+    wire signed [15:0] wn_u0 = wn[0] + m0;
+    wire signed [15:0] wn_u1 = wn[1] + m1;
+    wire signed [15:0] wn_u2 = wn[2] + m2;
+    wire signed [15:0] wn_u3 = wn[3] + m3;
+
+    always @(posedge Clk or posedge Rst) begin
+        if (Rst)
+            {wn[0],wn[1],wn[2],wn[3]} <= 64'sd0;
+        else if (mode_train)
+            {wn[0],wn[1],wn[2],wn[3]} <= {wn_u0,wn_u1,wn_u2,wn_u3};
     end
-  end
 
-  assign d = d1[27:12];
+    assign w0=wn[0];
+    assign w1=wn[1];
+    assign w2=wn[2];
+    assign w3=wn[3];
 
-  initial begin
-    w0 = 16'b0000100000000000;
-    w1 = 16'b0000100000000000;
-    w2 = 16'b0000100000000000;
-    w3 = 16'b0000100000000000;
-  end
 endmodule
 

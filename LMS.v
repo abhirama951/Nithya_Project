@@ -1,90 +1,73 @@
-// LMS_core.v
-module LMS_core (
-    input              Clk,
-    input              Rst,
-    input  signed [15:0] x_in,      // Input sample (Q4.12)
-    input  signed [15:0] d_in,      // Desired sample (Q4.12)
-    input              training_en, // 1: update weights, 0: freeze
-    input  signed [15:0] gamma,     // Step size (Q4.12)
-    input  signed [15:0] w0_set,    // External write values (used when load_weights=1)
-    input  signed [15:0] w1_set,
-    input  signed [15:0] w2_set,
-    input  signed [15:0] w3_set,
-    input              load_weights, // Pulse: load w*_set into wn[*]
-    output signed [15:0] y_out,     // Output (Q4.12)
-    output signed [15:0] err,       // Error (Q4.12)
-    output signed [15:0] w0, w1, w2, w3 // Current weights
+module LMS (
+    input Clk, Rst,
+    input signed [15:0] x_in, // Input signal
+    output signed [15:0] y_out, // Output signal
+    output signed [15:0] w0, w1, w2, w3, // Weights
+    output signed [15:0] err // Errors
 );
+  // 4 bits for integer, 12 bits for fraction
+  parameter signed [15:0] gamma = 16'b0000001100110011; // 0.2
 
-  // Tap delay line for x
-  reg signed [15:0] x[0:3];
+  reg signed [15:0] wn[0:3], x[0:3];
+  wire signed [15:0] wn_u[0:3];
+  wire signed [15:0] fir_out, m1,m2,m3,m4;
+  wire signed [31:0] m11,m21,m31,m41, m13,m23,m33,m43, y_out1;
+  reg signed [15:0] d_in;
+
+  FIR_Filter fir(
+      .Clk(Clk),
+      .Rst(Rst),
+      .x(x_in),
+      .d(fir_out)
+  );
+
+  always @(*) begin
+    if (Rst)
+      d_in <= 0;
+    else
+      d_in <= fir_out;
+  end
+
   always @(posedge Clk or posedge Rst) begin
     if (Rst) begin
-      x[0] <= 16'sd0; x[1] <= 16'sd0; x[2] <= 16'sd0; x[3] <= 16'sd0;
+      x[3]<=0; x[2]<=0; x[1]<=0; x[0]<=0;
     end else begin
-      x[3] <= x[2];
-      x[2] <= x[1];
-      x[1] <= x[0];
-      x[0] <= x_in;
+      x[3]<=x[2]; x[2]<=x[1]; x[1]<=x[0]; x[0]<=x_in;
     end
   end
 
-  // Weights
-  reg signed [15:0] wn[0:3];
-  // Optional external load
-  always @(posedge Clk or posedge Rst) begin
-    if (Rst) begin
-      wn[0] <= 16'sd0; wn[1] <= 16'sd0; wn[2] <= 16'sd0; wn[3] <= 16'sd0;
-    end else if (load_weights) begin
-      wn[0] <= w0_set; wn[1] <= w1_set; wn[2] <= w2_set; wn[3] <= w3_set;
-    end
-  end
+  assign y_out1 = $signed(wn[0])*$signed(x[0]) +
+                  $signed(wn[1])*$signed(x[1]) +
+                  $signed(wn[2])*$signed(x[2]) +
+                  $signed(wn[3])*$signed(x[3]);
+  assign y_out = y_out1[27:12];
 
-  // Output y = sum(wn[i]*x[i]) -> Q4.12
-  wire signed [31:0] y_acc = $signed(wn[0])*$signed(x[0]) +
-                             $signed(wn[1])*$signed(x[1]) +
-                             $signed(wn[2])*$signed(x[2]) +
-                             $signed(wn[3])*$signed(x[3]);
-  assign y_out = y_acc[27:12];
+  assign m11 = $signed(err)*$signed(x[0]);
+  assign m13 = $signed(gamma)*$signed(m11[27:12]);
+  assign m1 = m13[27:12];
 
-  // Error
-  assign err = d_in - y_out;
+  assign m21 = $signed(err)*$signed(x[1]);
+  assign m23 = $signed(gamma)*$signed(m21[27:12]);
+  assign m2 = m23[27:12];
 
-  // LMS updates gated by training_en
-  // m_i = gamma * (err * x[i]) with truncations to Q4.12
-  wire signed [31:0] p0 = $signed(err) * $signed(x[0]);
-  wire signed [15:0] p0_q = p0[27:12];
-  wire signed [31:0] a0 = $signed(gamma) * $signed(p0_q);
-  wire signed [15:0] a0_q = a0[27:12];
+  assign m31 = $signed(err)*$signed(x[2]);
+  assign m33 = $signed(gamma)*$signed(m31[27:12]);
+  assign m3 = m33[27:12];
 
-  wire signed [31:0] p1 = $signed(err) * $signed(x[1]);
-  wire signed [15:0] p1_q = p1[27:12];
-  wire signed [31:0] a1 = $signed(gamma) * $signed(p1_q);
-  wire signed [15:0] a1_q = a1[27:12];
+  assign m41 = $signed(err)*$signed(x[3]);
+  assign m43 = $signed(gamma)*$signed(m41[27:12]);
+  assign m4 = m43[27:12];
 
-  wire signed [31:0] p2 = $signed(err) * $signed(x[2]);
-  wire signed [15:0] p2_q = p2[27:12];
-  wire signed [31:0] a2 = $signed(gamma) * $signed(p2_q);
-  wire signed [15:0] a2_q = a2[27:12];
-
-  wire signed [31:0] p3 = $signed(err) * $signed(x[3]);
-  wire signed [15:0] p3_q = p3[27:12];
-  wire signed [31:0] a3 = $signed(gamma) * $signed(p3_q);
-  wire signed [15:0] a3_q = a3[27:12];
-
-  wire signed [15:0] wn_u0 = wn[0] + a0_q;
-  wire signed [15:0] wn_u1 = wn[1] + a1_q;
-  wire signed [15:0] wn_u2 = wn[2] + a2_q;
-  wire signed [15:0] wn_u3 = wn[3] + a3_q;
+  assign wn_u[0] = wn[0] + m1;
+  assign wn_u[1] = wn[1] + m2;
+  assign wn_u[2] = wn[2] + m3;
+  assign wn_u[3] = wn[3] + m4;
 
   always @(posedge Clk or posedge Rst) begin
     if (Rst) begin
-      // already reset above
-    end else if (training_en) begin
-      wn[0] <= wn_u0;
-      wn[1] <= wn_u1;
-      wn[2] <= wn_u2;
-      wn[3] <= wn_u3;
+      wn[0]<=0; wn[1]<=0; wn[2]<=0; wn[3]<=0;
+    end else begin
+      wn[0]<=wn_u[0]; wn[1]<=wn_u[1]; wn[2]<=wn_u[2]; wn[3]<=wn_u[3];
     end
   end
 
@@ -92,6 +75,37 @@ module LMS_core (
   assign w1 = wn[1];
   assign w2 = wn[2];
   assign w3 = wn[3];
+  assign err = d_in - y_out;
 
+endmodule
+
+
+module FIR_Filter (
+  input Clk,
+  input Rst,
+  input signed [15:0] x,
+  output signed [15:0] d
+);
+  reg signed [15:0] w0, w1, w2, w3;
+  reg signed [15:0] xn_0, xn_1, xn_2, xn_3;
+  reg signed [31:0] d1;
+
+  always @(posedge Clk) begin
+    if (Rst) begin
+      xn_0<=0; xn_1<=0; xn_2<=0; xn_3<=0; d1<=0;
+    end else begin
+      xn_3<=xn_2; xn_2<=xn_1; xn_1<=xn_0; xn_0<=x;
+      d1 <= w0*xn_0 + w1*xn_1 + w2*xn_2 + w3*xn_3;
+    end
+  end
+
+  assign d = d1[27:12];
+
+  initial begin
+    w0 = 16'b0000100000000000;
+    w1 = 16'b0000100000000000;
+    w2 = 16'b0000100000000000;
+    w3 = 16'b0000100000000000;
+  end
 endmodule
 

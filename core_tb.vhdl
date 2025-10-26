@@ -2,54 +2,48 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+library work;
+use work.common.all;
+use work.wishbone_types.all;
+
 entity core_tb is
-	end entity core_tb;
+end core_tb;
 
-architecture sim of core_tb is
+architecture behave of core_tb is
+        signal clk, rst: std_logic;
 
-	    -- Clock and reset
-	    signal clk       : std_logic := '0';
-	        signal rst       : std_logic := '1';
-		    signal irq_out   : std_logic_vector(15 downto 0);
-
-		        -- Clock period
-		        constant CLK_PERIOD : time := 20 ns;  -- 50 MHz
-
+        -- testbench signals
+        constant clk_period : time := 10 ns;
 begin
 
-	    ----------------------------------------------------------------------
-	    -- Clock generation
-	    ----------------------------------------------------------------------
-	    clk_process : process
-		        begin
-				        while true loop
-						            clk <= '0';
-							                wait for CLK_PERIOD/2;
-									            clk <= '1';
-										                wait for CLK_PERIOD/2;
-												        end loop;
-													    end process;
+    soc0: entity work.soc
+        generic map(
+            SIM => true,
+            MEMORY_SIZE => (384*1024),
+            RAM_INIT_FILE => "main_ram.bin",
+            CLK_FREQ => 100000000
+            )
+        port map(
+            rst => rst,
+            system_clk => clk
+            );
 
-													        ----------------------------------------------------------------------
-													        -- Reset generation
-													        ----------------------------------------------------------------------
-													        rst_process : process
-															    begin
-																            rst <= '1';
-																	            wait for 100 ns;
-																		            rst <= '0';
-																			            wait;
-																				        end process;
+    clk_process: process
+    begin
+        clk <= '0';
+        wait for clk_period/2;
+        clk <= '1';
+        wait for clk_period/2;
+    end process;
 
-																					    ----------------------------------------------------------------------
-																					    -- Instantiate SoC with LMS wrapper
-																					    ----------------------------------------------------------------------
-																					    uut : entity work.soc(rtl)
-																					            port map (
-																						                clk     => clk,
-																								            rst     => rst,
-																									                irq_out => irq_out
-																											        );
+    rst_process: process
+    begin
+        rst <= '1';
+        wait for 10*clk_period;
+        rst <= '0';
+        wait;
+    end process;
 
-end architecture sim;
+    jtag: entity work.sim_jtag;
 
+end;

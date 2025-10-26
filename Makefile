@@ -78,7 +78,7 @@ core_files = decode_types.vhdl common.vhdl wishbone_types.vhdl fetch1.vhdl \
 
 soc_files = wishbone_arbiter.vhdl wishbone_bram_wrapper.vhdl sync_fifo.vhdl \
 	wishbone_debug_master.vhdl xics.vhdl syscon.vhdl gpio.vhdl soc.vhdl \
-	spi_rxtx.vhdl spi_flash_ctrl.vhdl git.vhdl
+	spi_rxtx.vhdl spi_flash_ctrl.vhdl git.vhdl Periph_Wrapper.vhdl
 
 uart_files = $(wildcard uart16550/*.v)
 
@@ -258,7 +258,7 @@ fpga_files = fpga/soc_reset.vhdl \
 synth_files = $(core_files) $(soc_files) $(soc_extra_synth) $(fpga_files) $(clkgen) $(toplevel) $(dmi_dtm)
 
 microwatt.json: $(synth_files) $(RAM_INIT_FILE)
-	$(YOSYS) $(GHDLSYNTH) -p "ghdl --std=08 --no-formal $(GHDL_IMAGE_GENERICS) $(synth_files) -e toplevel; read_verilog $(uart_files) $(soc_extra_v) ; synth_ecp5 -abc9 -nowidelut -json $@  $(SYNTH_ECP5_FLAGS)"
+	$(YOSYS) $(GHDLSYNTH) -p "ghdl --std=08 --no-formal $(GHDL_IMAGE_GENERICS) $(synth_files) -e toplevel; read_verilog $(uart_files) $(soc_extra_v); synth_ecp5 -abc9 -nowidelut -json $@  $(SYNTH_ECP5_FLAGS)"
 
 microwatt.v: $(synth_files) $(RAM_INIT_FILE)
 	$(YOSYS) $(GHDLSYNTH) -p "ghdl --std=08 --no-formal $(GHDL_IMAGE_GENERICS) $(synth_files) -e toplevel; write_verilog $@"
